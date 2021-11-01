@@ -1,0 +1,157 @@
+// License: GPL - http://www.gnu.org/licenses/gpl.html
+// Midi Gater
+// by Carsten Dolar jsfx@cdolar.de
+// 2008/09/16 - first version! contact me with bugs etc
+// 2008/09/20 - updated: tempo sync, handle slider and buffer changes more gracefully
+
+desc:Midi-Controllable Audio Gate (C.Dolar)
+//tags: processing dynamics
+//author: Carsten Dolar
+
+//
+
+slider1:stereo_mode=0<0,1,1{off,on}>Stereo Mode
+slider2:midi_split=60<0,127,1)>MIDI split for stereo
+slider3:use_midi_vel=0<0,1,1{no,yes}>Use Midi Velocity for Gain
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+gain_L=1;
+gain_R=1;
+sample_ctr = 0;
+rec_note_on_L = 0;
+rec_note_on_R = 0;
+rec_key_L = 0;
+rec_key_R = 0;
+last_play_state = 0;
+cur_play_state = 0;
+midi_buffer_pos=0;
+midi_buffer_len = 0;
+midi_buffer = 10000;
+
+function stopped(state) (
+  state==0||state==2||state==6;
+);
+
+function running(state) (
+  state==1||state==5;
+);
+
+function addEntry(offset,gain,channel) (
+  // offset: sample offset in block
+  // gain: gain to be used (0...1)
+  // channel: 0 - both channels
+  //          1 - left channel
+  //          2 - right channel
+  midi_buffer[midi_buffer_len] = offset;
+  midi_buffer[midi_buffer_len+1] = gain;
+  midi_buffer[midi_buffer_len+2] = channel;
+  midi_buffer_len += 3;
+);
+
+
+@block
+// collect midi signals
+midi_buffer_len = 0;
+while(midirecv(offset,msg1,msg2,msg3)) ( 
+  msg1==$x90 ? (
+    // received a midi note on command
+    // The plugin will open the gate until the note off 
+    // command for the same note is received.
+    // In stereo mode, the position of the note is checked
+    // relative to the split point, so that left and right
+    // channel can be controlled separately.
+    stereo_mode ? (
+      !rec_note_on_L && msg2<midi_split? (
+        rec_key_L = msg2;
+        rec_note_on_L = 1;
+        gain = use_midi_vel ? (msg3/127) : 1;
+        addEntry(offset,gain,1);
+      );
+      !rec_note_on_R && msg2>=midi_split? (
+        rec_key_R = msg2;
+        rec_note_on_R = 1;
+        gain = use_midi_vel? (msg3/127) : 1;
+        addEntry(offset,gain,2);
+      );
+    ) : (
+      !rec_note_on_L ? (
+         rec_key_L = msg2;
+         rec_note_on_L = 1;
+         gain = use_midi_vel? (msg3/127) : 1;
+         addEntry(offset,gain,0);
+      ); 
+    );
+  );
+  msg1==$x80? (
+    stereo_mode ? (
+      rec_note_on_L && msg2==rec_key_L ? (
+        rec_note_on_L = 0;
+        rec_key_L = 0;
+        addEntry(offset,0.0,1);
+      );
+      rec_note_on_R && msg2==rec_key_R ? (
+        rec_note_on_R = 0;
+        rec_key_R = 0;
+        addEntry(offset,0.0,2);
+      );
+    ) : (
+      rec_note_on_L && msg2==rec_key_L ? (
+        rec_note_on_L = 0;
+        rec_key_L = 0;
+        addEntry(offset,0.0,0);
+      );
+    );
+  );
+);
+sample_ctr = 0;
+midi_buffer_pos = 0;
+
+@sample
+// initialize gain on playback state change
+cur_play_state = play_state;
+cur_play_state != last_play_state ? 
+(
+  // when transitioning in the stopped-stated, set gain back to 1
+  running(last_play_state) && stopped(cur_play_state)? ( gain_L = 1; gain_R = 1; );
+  // when transitioing in the running state, set gain to 0
+  stopped(last_play_state) && running(cur_play_state)? ( gain_L = 0; gain_R = 0; );
+  last_play_state = cur_play_state;
+  transition_ctr += 1;
+);
+// check the midi buffer during running state
+running(play_state) && midi_buffer_pos<midi_buffer_len ? (
+  offset = midi_buffer[midi_buffer_pos];
+  sample_ctr>=offset ? (
+    gain = midi_buffer[midi_buffer_pos+1];
+    channel = midi_buffer[midi_buffer_pos+2];
+    channel==0? (gain_L = gain; gain_R = gain; );
+    channel==1? gain_L = gain ;
+    channel==2? gain_R = gain;
+    midi_buffer_pos += 3;
+  );
+);
+
+// do the gain modification
+spl0 *= gain_L;
+spl1 *= gain_R;
+sample_ctr += 1;
+
+@gfx
+  gfx_x=0;
+  gfx_y=0;
+  gfx_set(255);
+  gfx_printf("
+This plugin lets audio pass through when you play any note on your\n
+MIDI keyboard. You can controll either left and right together with one key, \n
+by setting Stereo Mode to off, or separate keys for left and right channel using \n
+any key lef/right of the MIDI split point by setting Stereo Mode to On and selecting \n
+the appropriate MIDI split point. You can also use MIDI velocity to set the gain.\n
+\n
+Best practice: Create a MIDI child track to your audio track and record \n
+the MIDI item there."); 
+
