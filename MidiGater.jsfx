@@ -1,8 +1,6 @@
 // License: GPL - http://www.gnu.org/licenses/gpl.html
 // Midi Gater
 // by Carsten Dolar jsfx@cdolar.de
-// 2008/09/16 - first version! contact me with bugs etc
-// 2008/09/20 - updated: tempo sync, handle slider and buffer changes more gracefully
 
 desc:Midi-Controllable Audio Gate (C.Dolar)
 //tags: processing dynamics
